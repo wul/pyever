@@ -1,0 +1,242 @@
+#!/usr/bin/env python
+"""
+Python Evernote Synchronizer
+========================================
+
+This is the command line tool for synchronizing folder with python notebook
+
+
+Currently it is simple prototype for using evernote sdks
+"""
+
+
+import sys
+import os
+from evernote.api.client import EvernoteClient
+import evernote.edam.type.ttypes as Types
+
+from evernote.edam.notestore import NoteStore
+
+
+CFG_FILE = ".pyever"
+
+TOKEN = "S=s1:U=8db26:E=14aed63154a:C=14395b1e94e:P=1cd:A=en-devtoken:V=2:H=06f07ecdf573bd646efe84c9bf951138"
+
+
+def usage():
+    print "pyerver local_dir" 
+
+
+
+
+def get_note_book(note_store, nb_name):
+    note_books = note_store.listNotebooks()
+    for nb in note_books:
+        if nb.name == nb_name:
+            return nb
+
+    return None
+
+def create_note_book(note_store, nb_name):
+
+    notebook = Types.Notebook()
+    notebook.name = nb_name
+    return note_store.createNotebook(notebook)
+
+
+
+
+
+
+def plain_text_to_enml (line):
+    new_line = line.strip()
+    if line:
+        return "<div>%s</div>" % line
+    else:
+        return "<div></br></div>"
+
+def load_file_content(pathname):
+    title   = ""
+    content = ""
+    try:
+        with open(pathname) as f:
+            for line in f:
+                if not title:
+                    title = line.strip()
+                content += plain_text_to_enml(line)
+    except EnvironmentError:
+        content = "Oops, reading file %s failed" % pathname
+    
+    return title, content
+
+
+
+
+def upload_file(note_store, pathname, nb):
+    note = Types.Note()
+    title, content = load_file_content(pathname)
+    note.title = title
+    note.content = """<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note>%s</en-note>""" % content
+
+    note.notebookGuid = nb.guid
+
+    #indicates this is a read-only note, can only be edited locally
+    note.attributes = Types.NoteAttributes()
+    note.attributes.contentClass = "pyever.text"
+    
+    try:    
+        note = note_store.createNote(note)
+        #add application key/value to indicate where the note come from    
+        
+        note_store.setNoteApplicationDataEntry(note.guid, 
+                                               "filename", 
+                                               os.path.basename(pathname))
+    except Exception, ex:
+        print ex
+
+
+
+
+def list_notebook(note_store, nb_name):
+    nb = get_note_book(note_store, nb_name)
+    if not nb:
+        return []
+
+    filter = NoteStore.NoteFilter()
+    #
+    # words - sensitive text-based query
+    # notebookGuid - restrict search in one folder
+    # tagGuids - array of tag guids
+    # inactive - true in Trash/false default value
+    #
+    filter.notebookGuid = nb.guid 
+    
+    spec = NoteStore.NotesMetadataResultSpec()
+    spec.includeTitle = True
+    spec.includeAttributes = True
+    spec.includeUpdated = True
+    spec.includeUpdateSequenceNum = True
+
+    lst = note_store.findNotesMetadata( filter, 0, 1000, spec)
+    return lst.notes
+
+
+
+import glob
+
+def list_folder(folder):
+    pattern = "%s/*" % folder
+    return [x for x in glob.glob(pattern)]
+
+
+
+from datetime import datetime
+def display_account_info(client):
+    user_store  = client.get_user_store() 
+    note_store  = client.get_note_store()
+    
+    state = note_store.getSyncState()
+    
+    info = {"Upload Limit" : user.accounting.uploadLimit,
+            "Used So Far"  : state.uploaded,
+            "Quota Remaining" : user.accounting.uploadLimit - state.uploaded,
+            "end date"    :  datetime.fromtimestamp(user.accounting.uploadLimitEnd/1000.0),
+    }
+    
+    for key in info:
+        print "%20s  : %s" % (key, info[key])
+
+
+def update_note_content (note_store, pathname, note_guid):
+
+    note = note_store.getNote(note_guid, True, True, True, True)
+    
+    title, content = load_file_content(pathname)
+    note.title = title
+    note.content = """<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE en-note SYSTEM "http://xml.evernote.com/pub/enml2.dtd"><en-note>%s</en-note>""" % content
+    note_store.updateNote(note)
+
+from ConfigParser import ConfigParser
+
+def load_configurations ():
+
+    pathname = os.path.sep.join((os.path.expanduser('~'), '.pyever'))
+    config = ConfigParser()
+    config.read(pathname)
+    return config 
+        
+if __name__ == '__main__':
+    
+    if len(sys.argv) < 2:
+        usage()
+        sys.exit(1)
+
+    
+    #
+    # Load the configuration file
+    #
+    try: 
+        config = load_configurations()
+    except:
+        if not config:
+            print """You need create a .pyever file under your home directory. The file should contains below options
+[General]
+Mode=Product
+[Development]
+Token=this_is_your_development_token
+
+[Product]
+#get it from https://www.evernote.com/api/DeveloperToken.action
+Token=this_is_your_prouct_token
+"""
+        sys.exit(1)
+
+    
+    mode = config.get('General', 'Mode')
+    #import pdb;pdb.set_trace()
+
+    if mode == "Development":
+        sandbox = True
+    else :
+        sandbox = False
+
+    token = config.get(mode, 'Token').strip()
+    folder = sys.argv[1]
+    client = EvernoteClient(token=token, sandbox=sandbox)
+    user_store = client.get_user_store()
+    note_store= client.get_note_store()
+    user = user_store.getUser()
+    display_account_info(client)
+    
+
+
+    #check if the notebook that identical with the folder name exists
+    
+    nb_name = folder.strip('/').split('/')[-1]
+    
+    nb = get_note_book(note_store, nb_name)
+    
+    if not nb:
+        nb = create_note_book(note_store, nb_name)
+
+    
+
+    note_lst = list_notebook(note_store, nb_name)
+
+    #get dictionary that contains pathname => guid pair
+    note_infos = {note_store.getNoteApplicationDataEntry(x.guid, 'filename'): x.guid for x in note_lst}
+    
+    print "The notes came from:\n %s" % note_infos
+    
+    for pathname in list_folder(folder):
+
+        #check if the file uploaded
+        filename = os.path.basename(pathname)
+        if filename in note_infos:
+            update_note_content(note_store, pathname, note_infos[filename])
+        else:
+            upload_file(note_store, pathname, nb)
+
+
+
+    
