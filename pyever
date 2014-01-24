@@ -18,10 +18,6 @@ import evernote.edam.type.ttypes as Types
 from evernote.edam.notestore import NoteStore
 
 
-CFG_FILE = ".pyever"
-
-TOKEN = "S=s1:U=8db26:E=14aed63154a:C=14395b1e94e:P=1cd:A=en-devtoken:V=2:H=06f07ecdf573bd646efe84c9bf951138"
-
 
 def usage():
     print "pyerver local_dir" 
@@ -193,7 +189,6 @@ Token=this_is_your_prouct_token
 
     
     mode = config.get('General', 'Mode')
-    #import pdb;pdb.set_trace()
 
     if mode == "Development":
         sandbox = True
